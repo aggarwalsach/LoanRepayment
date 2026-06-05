@@ -41,4 +41,13 @@ public class Loan {
 
     @Builder.Default
     private List<EmiSchedule> emiSchedules = new ArrayList<>();
+
+    @OneToMany(
+            mappedBy = "loan",
+            cascade = CascadeType.ALL,
+            orphanRemoval = true
+    )
+    @Builder.Default
+    private List<LoanCharge> charges =
+            new ArrayList<>();
 }
