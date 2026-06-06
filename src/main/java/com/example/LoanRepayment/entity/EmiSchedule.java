@@ -24,9 +24,11 @@ public class EmiSchedule {
 
     private BigDecimal interestDue;
 
-    private BigDecimal principalPaid;
+    @Builder.Default
+    private BigDecimal principalPaid = BigDecimal.ZERO;
 
-    private BigDecimal interestPaid;
+    @Builder.Default
+    private BigDecimal interestPaid = BigDecimal.ZERO;
 
     private LocalDate dueDate;
 

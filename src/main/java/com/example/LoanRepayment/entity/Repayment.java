@@ -1,5 +1,6 @@
 package com.example.LoanRepayment.entity;
 
+import com.example.LoanRepayment.enums.RepaymentStatus;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -18,7 +19,9 @@ public class Repayment {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private Long loanId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "loan_id")
+    private Loan loan;
 
     @Column(unique = true)
     private String referenceId;
@@ -27,5 +30,7 @@ public class Repayment {
 
     private LocalDateTime paymentDate;
 
-    private Boolean reversed;
+    @Enumerated(EnumType.STRING)
+    private RepaymentStatus status;
+
 }
