@@ -8,6 +8,8 @@ import com.example.LoanRepayment.enums.ChargeStatus;
 import com.example.LoanRepayment.enums.EmiStatus;
 import com.example.LoanRepayment.enums.RepaymentStatus;
 import com.example.LoanRepayment.exception.DuplicateRepaymentException;
+import com.example.LoanRepayment.exception.LoanNotFoundException;
+import com.example.LoanRepayment.exception.RepaymentNotFoundException;
 import com.example.LoanRepayment.repository.*;
 import com.example.LoanRepayment.service.RepaymentService;
 import lombok.RequiredArgsConstructor;
@@ -32,7 +34,8 @@ public class RepaymentServiceImpl implements RepaymentService {
 
     @Override
     public RepaymentResponse processRepayment(RepaymentRequest request) {
-        Loan loan = loanRepository.findById(request.getLoanId()).orElseThrow(() -> new RuntimeException("Loan not found"));
+        Loan loan = loanRepository.findById(request.getLoanId())
+                .orElseThrow(() -> new LoanNotFoundException("Loan not found"));
 
         repaymentRepository.findByReferenceId(request.getReferenceId()).ifPresent(r -> {
             throw new DuplicateRepaymentException(
@@ -40,7 +43,7 @@ public class RepaymentServiceImpl implements RepaymentService {
         });
 
         Repayment repayment = Repayment.builder().loan(loan).referenceId(request.getReferenceId()).amount(request.getAmount())
-                .paymentDate(request.getPaymentDate()).status(RepaymentStatus.PROCESSED).build();
+                .paymentDate(LocalDateTime.now()).status(RepaymentStatus.PROCESSED).build();
 
         repaymentRepository.save(repayment);
 
@@ -48,9 +51,8 @@ public class RepaymentServiceImpl implements RepaymentService {
 
         remaining = allocateCharges(loan, repayment, remaining);
 
-        remaining = allocateInterest(loan, repayment, remaining);
+        remaining = allocateEmis(loan, repayment, remaining);
 
-        remaining = allocatePrincipal(loan, repayment, remaining);
 
         return RepaymentResponse.builder().referenceId(repayment.getReferenceId()).allocatedAmount(request.getAmount()
                 .subtract(remaining)).message("Repayment processed successfully").build();
@@ -58,7 +60,8 @@ public class RepaymentServiceImpl implements RepaymentService {
 
     @Override
     public RepaymentReversalResponse reverseRepayment(Long repaymentId) {
-        Repayment repayment = repaymentRepository.findById(repaymentId).orElseThrow(() -> new RuntimeException("Repayment not found"));
+        Repayment repayment = repaymentRepository.findById(repaymentId)
+                .orElseThrow(() -> new RepaymentNotFoundException("Repayment not found"));
 
         if (repayment.getStatus() == RepaymentStatus.REVERSED) {
             throw new RuntimeException("Repayment already reversed");
@@ -116,7 +119,6 @@ public class RepaymentServiceImpl implements RepaymentService {
             emi.setStatus(EmiStatus.PAID);
         } else if (emi.getPrincipalPaid().compareTo(BigDecimal.ZERO) > 0
                 || emi.getInterestPaid().compareTo(BigDecimal.ZERO) > 0) {
-
             emi.setStatus(EmiStatus.PARTIALLY_PAID);
         } else {
             emi.setStatus(EmiStatus.PENDING);
@@ -159,7 +161,7 @@ public class RepaymentServiceImpl implements RepaymentService {
         return remaining;
     }
 
-    private BigDecimal allocateInterest(Loan loan, Repayment repayment, BigDecimal remaining) {
+    private BigDecimal allocateEmis(Loan loan, Repayment repayment, BigDecimal remaining) {
 
         List<EmiSchedule> emis = loan.getEmiSchedules();
 
@@ -171,72 +173,57 @@ public class RepaymentServiceImpl implements RepaymentService {
                 break;
             }
 
-            BigDecimal outstanding = emi.getInterestDue().subtract(emi.getInterestPaid());
+            /*
+             * INTEREST FIRST
+             */
+            BigDecimal interestOutstanding = emi.getInterestDue().subtract(emi.getInterestPaid());
 
-            if (outstanding.compareTo(BigDecimal.ZERO) <= 0) {
-                continue;
+            if (interestOutstanding.compareTo(BigDecimal.ZERO) > 0) {
+
+                BigDecimal allocation = remaining.min(interestOutstanding);
+
+                emi.setInterestPaid(emi.getInterestPaid().add(allocation));
+
+                remaining = remaining.subtract(allocation);
+
+                ledgerRepository.save(LedgerEntry.builder().repaymentReference(repayment.getReferenceId()).entityType("EMI").entityId(emi.getId()).component("INTEREST").amount(allocation).createdDate(LocalDateTime.now()).build());
             }
 
-            BigDecimal allocation = remaining.min(outstanding);
+            /*
+             * PRINCIPAL SECOND
+             */
+            if (remaining.compareTo(BigDecimal.ZERO) > 0) {
 
-            emi.setInterestPaid(emi.getInterestPaid().add(allocation));
+                BigDecimal principalOutstanding = emi.getPrincipalDue().subtract(emi.getPrincipalPaid());
+
+                if (principalOutstanding.compareTo(BigDecimal.ZERO) > 0) {
+
+                    BigDecimal allocation = remaining.min(principalOutstanding);
+
+                    emi.setPrincipalPaid(emi.getPrincipalPaid().add(allocation));
+
+                    remaining = remaining.subtract(allocation);
+
+                    ledgerRepository.save(LedgerEntry.builder().repaymentReference(repayment.getReferenceId()).entityType("EMI").entityId(emi.getId()).component("PRINCIPAL").amount(allocation).createdDate(LocalDateTime.now()).build());
+                }
+            }
+
             updateEmiStatus(emi);
+
             emiRepository.save(emi);
-
-            remaining = remaining.subtract(allocation);
-
-            ledgerRepository.save(LedgerEntry.builder().repaymentReference(repayment.getReferenceId())
-                    .entityType("EMI").entityId(emi.getId()).component("INTEREST").amount(allocation)
-                    .createdDate(LocalDateTime.now()).build());
         }
 
         return remaining;
     }
 
-    private BigDecimal allocatePrincipal(Loan loan, Repayment repayment, BigDecimal remaining) {
-
-        List<EmiSchedule> emis = loan.getEmiSchedules();
-
-        emis.sort(Comparator.comparing(EmiSchedule::getDueDate));
-
-        for (EmiSchedule emi : emis) {
-
-            if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
-                break;
-            }
-
-            BigDecimal outstanding = emi.getPrincipalDue().subtract(emi.getPrincipalPaid());
-
-            if (outstanding.compareTo(BigDecimal.ZERO) <= 0) {
-                continue;
-            }
-
-            BigDecimal allocation = remaining.min(outstanding);
-
-            emi.setPrincipalPaid(emi.getPrincipalPaid().add(allocation));
-            updateEmiStatus(emi);
-            emiRepository.save(emi);
-
-            remaining = remaining.subtract(allocation);
-
-            ledgerRepository.save(LedgerEntry.builder().repaymentReference(repayment.getReferenceId())
-                    .entityType("EMI").entityId(emi.getId()).component("PRINCIPAL").amount(allocation)
-                    .createdDate(LocalDateTime.now()).build());
-        }
-
-        return remaining;
-    }
 
     private void updateChargeStatus(LoanCharge charge) {
 
         if (charge.getOutstandingAmount().compareTo(BigDecimal.ZERO) == 0) {
-
             charge.setStatus(ChargeStatus.PAID);
         } else if (charge.getAmountPaid().compareTo(BigDecimal.ZERO) > 0) {
-
             charge.setStatus(ChargeStatus.PARTIALLY_PAID);
         } else {
-
             charge.setStatus(ChargeStatus.PENDING);
         }
     }

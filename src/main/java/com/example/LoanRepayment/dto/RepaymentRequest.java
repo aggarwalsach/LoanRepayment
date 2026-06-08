@@ -19,9 +19,6 @@ public class RepaymentRequest {
     private BigDecimal amount;
 
     @NotNull
-    private LocalDateTime paymentDate;
-
-    @NotNull
     private String referenceId;
 
 }

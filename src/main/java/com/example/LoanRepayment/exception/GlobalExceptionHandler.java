@@ -20,4 +20,18 @@ public class GlobalExceptionHandler {
 
         return ex.getMessage();
     }
+
+    @ExceptionHandler(RepaymentNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public String repaymentNotFound(RepaymentNotFoundException ex) {
+
+        return ex.getMessage();
+    }
+
+    @ExceptionHandler(TenureAndEMIMismatchException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public String tenureAndEMIMismatch(TenureAndEMIMismatchException ex) {
+
+        return ex.getMessage();
+    }
 }

@@ -7,6 +7,7 @@ import com.example.LoanRepayment.entity.EmiSchedule;
 import com.example.LoanRepayment.entity.Loan;
 import com.example.LoanRepayment.enums.EmiStatus;
 import com.example.LoanRepayment.enums.LoanStatus;
+import com.example.LoanRepayment.exception.TenureAndEMIMismatchException;
 import com.example.LoanRepayment.repository.LoanRepository;
 import com.example.LoanRepayment.service.LoanService;
 import lombok.Builder;
@@ -43,6 +44,7 @@ public class LoanServiceImpl implements LoanService {
                     .interestPaid(BigDecimal.ZERO).status(EmiStatus.PENDING)
                     .dueDate(schedule.getDueDate()).loan(loan).build();
 
+
             loan.getEmiSchedules().add(emi);
         });
 
@@ -60,7 +62,7 @@ public class LoanServiceImpl implements LoanService {
 
         if (request.getEmiSchedules().size() != request.getTenure()) {
 
-            throw new RuntimeException("Tenure and EMI count mismatch");
+            throw new TenureAndEMIMismatchException("Tenure and EMI count mismatch");
         }
 
         BigDecimal totalPrincipal = request.getEmiSchedules().stream()
